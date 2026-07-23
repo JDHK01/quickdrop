@@ -1,0 +1,35 @@
+name: quickdrop
+
+services:
+  app:
+    build:
+      context: .
+    container_name: quickdrop
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /app/data
+      HOST: 0.0.0.0
+      PORT: 8000
+    ports:
+      - "0.0.0.0:8008:8000"
+    volumes:
+      - ./data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    mem_limit: 256m
+    cpus: 0.5
+    stop_grace_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
