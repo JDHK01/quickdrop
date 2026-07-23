@@ -197,101 +197,6 @@ a {
   height: 17px;
 }
 
-.login-view {
-  min-height: 100vh;
-  background: #eef1ef;
-}
-
-.login-shell {
-  display: grid;
-  min-height: 100vh;
-  place-items: center;
-  padding: 28px 18px;
-}
-
-.login-panel {
-  width: min(100%, 410px);
-  padding: 34px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  box-shadow: var(--shadow);
-}
-
-.brand-login {
-  margin-bottom: 46px;
-}
-
-.login-copy {
-  margin-bottom: 26px;
-}
-
-.login-copy h1 {
-  margin: 0;
-  font-size: 28px;
-  line-height: 1.2;
-}
-
-.login-form {
-  display: grid;
-  gap: 10px;
-}
-
-.login-form label {
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.password-field {
-  position: relative;
-}
-
-.password-field > svg {
-  position: absolute;
-  z-index: 1;
-  top: 50%;
-  left: 13px;
-  width: 17px;
-  height: 17px;
-  color: var(--soft);
-  pointer-events: none;
-  transform: translateY(-50%);
-}
-
-.password-field input {
-  width: 100%;
-  height: 46px;
-  padding: 10px 48px 10px 42px;
-  color: var(--ink);
-  background: var(--surface);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius);
-  outline: none;
-}
-
-.password-field input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(20, 122, 88, 0.12);
-}
-
-.field-action {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-}
-
-.form-error {
-  margin: 2px 0 0;
-  color: var(--danger);
-  font-size: 13px;
-}
-
-.login-button {
-  width: 100%;
-  margin-top: 12px;
-}
-
 .topbar {
   position: sticky;
   z-index: 20;
@@ -334,15 +239,6 @@ a {
   background: #62d6a9;
   border-radius: 50%;
   box-shadow: 0 0 0 3px rgba(98, 214, 169, 0.13);
-}
-
-.topbar-button {
-  color: #c4cac6;
-}
-
-.topbar-button:hover {
-  color: #ffffff;
-  background: #2a2f2b;
 }
 
 .workspace {
@@ -612,7 +508,7 @@ progress::-moz-progress-bar {
 .resource-header,
 .resource-row {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) 110px 150px 142px;
+  grid-template-columns: minmax(240px, 1fr) 110px 150px 154px;
   align-items: center;
   gap: 18px;
   padding: 0 18px;
@@ -799,6 +695,39 @@ progress::-moz-progress-bar {
   height: 20px;
 }
 
+.rename-icon {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.rename-field {
+  display: grid;
+  gap: 7px;
+  margin-top: 18px;
+}
+
+.rename-field span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.rename-field input {
+  width: 100%;
+  height: 42px;
+  padding: 8px 11px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  outline: none;
+}
+
+.rename-field input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(20, 122, 88, 0.1);
+}
+
 .confirm-dialog h2 {
   margin: 18px 0 6px;
   font-size: 19px;
@@ -933,14 +862,6 @@ progress::-moz-progress-bar {
 }
 
 @media (max-width: 520px) {
-  .login-panel {
-    padding: 27px 22px;
-  }
-
-  .brand-login {
-    margin-bottom: 38px;
-  }
-
   .service-status {
     display: none;
   }
@@ -973,7 +894,7 @@ progress::-moz-progress-bar {
   }
 
   .resource-row {
-    grid-template-columns: minmax(0, 1fr) 72px;
+    grid-template-columns: minmax(0, 1fr) 106px;
   }
 
   .file-preview {
@@ -984,7 +905,12 @@ progress::-moz-progress-bar {
 
   .row-actions {
     display: grid;
-    grid-template-columns: repeat(2, 34px);
+    grid-template-columns: repeat(3, 32px);
+  }
+
+  .row-actions .icon-button {
+    width: 32px;
+    height: 32px;
   }
 
   .open-action {

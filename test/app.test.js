@@ -9,7 +9,6 @@ const { loadConfig } = require("../src/config");
 let baseUrl;
 let dataDir;
 let server;
-let sessionCookie;
 
 async function request(route, options = {}) {
   return fetch(`${baseUrl}${route}`, options);
@@ -22,8 +21,6 @@ before(async () => {
     maxFileSizeMb: 1,
     maxFiles: 2,
     publicBaseUrl: "http://127.0.0.1",
-    sessionSecret: "test-session-secret-that-is-long-enough",
-    uploadPassword: "correct horse battery staple",
   });
   const app = await createApp(config);
   server = app.listen(0, "127.0.0.1");
@@ -36,7 +33,7 @@ after(async () => {
   await fs.rm(dataDir, { recursive: true, force: true });
 });
 
-test("reports health and protects file administration", async () => {
+test("reports health and exposes file administration without login", async () => {
   const health = await request("/health");
   assert.equal(health.status, 200);
   assert.deepEqual(await health.json(), { status: true, service: "quickdrop", version: "1.0.0" });
@@ -44,25 +41,12 @@ test("reports health and protects file administration", async () => {
   assert.equal(health.headers.get("strict-transport-security"), null);
 
   const files = await request("/api/files");
-  assert.equal(files.status, 401);
-});
-
-test("rejects an invalid password and creates a session for the correct password", async () => {
-  const badLogin = await request("/api/login", {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-quickdrop-request": "1" },
-    body: JSON.stringify({ password: "not-the-password" }),
+  assert.equal(files.status, 200);
+  assert.deepEqual(await files.json(), {
+    files: [],
+    totalBytes: 0,
+    limits: { maxFileSizeMb: 1, maxFiles: 2 },
   });
-  assert.equal(badLogin.status, 401);
-
-  const login = await request("/api/login", {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-quickdrop-request": "1" },
-    body: JSON.stringify({ password: "correct horse battery staple" }),
-  });
-  assert.equal(login.status, 200);
-  sessionCookie = login.headers.get("set-cookie").split(";", 1)[0];
-  assert.match(sessionCookie, /^quickdrop_session=/);
 });
 
 test("uploads, lists, serves, and deletes a file", async () => {
@@ -71,7 +55,7 @@ test("uploads, lists, serves, and deletes a file", async () => {
 
   const upload = await request("/api/files", {
     method: "POST",
-    headers: { cookie: sessionCookie, "x-quickdrop-request": "1" },
+    headers: { "x-quickdrop-request": "1" },
     body: form,
   });
   assert.equal(upload.status, 201);
@@ -80,11 +64,37 @@ test("uploads, lists, serves, and deletes a file", async () => {
   assert.equal(payload.files[0].originalName, "测试 文档.txt");
   assert.match(payload.files[0].id, /^[a-f0-9]{32}$/);
 
-  const listing = await request("/api/files", { headers: { cookie: sessionCookie } });
+  const listing = await request("/api/files");
   assert.equal(listing.status, 200);
   assert.equal((await listing.json()).files.length, 1);
 
-  const publicFile = await fetch(payload.files[0].url.replace("http://127.0.0.1", baseUrl));
+  const detail = await request(`/api/files/${payload.files[0].id}`);
+  assert.equal(detail.status, 200);
+  assert.equal((await detail.json()).file.originalName, "测试 文档.txt");
+
+  const rejectedRename = await request(`/api/files/${payload.files[0].id}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ originalName: "新名称.txt" }),
+  });
+  assert.equal(rejectedRename.status, 403);
+
+  const renamed = await request(`/api/files/${payload.files[0].id}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json", "x-quickdrop-request": "1" },
+    body: JSON.stringify({ originalName: "新名称.txt" }),
+  });
+  assert.equal(renamed.status, 200);
+  const renamedFile = (await renamed.json()).file;
+  assert.equal(renamedFile.originalName, "新名称.txt");
+  assert.notEqual(renamedFile.url, payload.files[0].url);
+
+  const oldUrl = payload.files[0].url.replace("http://127.0.0.1", baseUrl);
+  const oldPublicFile = await fetch(oldUrl, { redirect: "manual" });
+  assert.equal(oldPublicFile.status, 308);
+  assert.equal(oldPublicFile.headers.get("location"), renamedFile.url);
+
+  const publicFile = await fetch(renamedFile.url.replace("http://127.0.0.1", baseUrl));
   assert.equal(publicFile.status, 200);
   assert.equal(await publicFile.text(), "hello from quickdrop");
   assert.match(publicFile.headers.get("content-disposition"), /^attachment;/);
@@ -92,10 +102,10 @@ test("uploads, lists, serves, and deletes a file", async () => {
 
   const removed = await request(`/api/files/${payload.files[0].id}`, {
     method: "DELETE",
-    headers: { cookie: sessionCookie, "x-quickdrop-request": "1" },
+    headers: { "x-quickdrop-request": "1" },
   });
   assert.equal(removed.status, 204);
 
-  const missing = await fetch(payload.files[0].url.replace("http://127.0.0.1", baseUrl));
+  const missing = await fetch(renamedFile.url.replace("http://127.0.0.1", baseUrl));
   assert.equal(missing.status, 404);
 });

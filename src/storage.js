@@ -52,6 +52,23 @@ class FileStore {
     return `${this.publicBaseUrl}/f/${id}/${encodePathSegment(originalName)}`;
   }
 
+  async writeRecord(record) {
+    const storedRecord = {
+      id: record.id,
+      originalName: record.originalName,
+      size: record.size,
+      contentType: record.contentType,
+      uploadedAt: record.uploadedAt,
+      ...(record.updatedAt ? { updatedAt: record.updatedAt } : {}),
+    };
+    const temporaryPath = `${this.metadataPath(record.id)}.${crypto.randomUUID()}.tmp`;
+    await fs.writeFile(temporaryPath, `${JSON.stringify(storedRecord)}\n`, {
+      flag: "wx",
+      mode: 0o600,
+    });
+    await fs.rename(temporaryPath, this.metadataPath(record.id));
+  }
+
   async saveUploaded(file) {
     if (!ID_PATTERN.test(file.filename)) {
       throw new Error("Invalid generated file id");
@@ -66,9 +83,7 @@ class FileStore {
       uploadedAt: new Date().toISOString(),
     };
 
-    const temporaryPath = `${this.metadataPath(record.id)}.${crypto.randomUUID()}.tmp`;
-    await fs.writeFile(temporaryPath, `${JSON.stringify(record)}\n`, { flag: "wx", mode: 0o600 });
-    await fs.rename(temporaryPath, this.metadataPath(record.id));
+    await this.writeRecord(record);
     return this.withUrl(record);
   }
 
@@ -98,6 +113,23 @@ class FileStore {
     return records
       .filter(Boolean)
       .sort((left, right) => right.uploadedAt.localeCompare(left.uploadedAt));
+  }
+
+  async rename(id, value) {
+    const current = await this.get(id);
+    if (!current) return null;
+
+    const originalName = sanitizeOriginalName(value);
+    const updated = {
+      id: current.id,
+      originalName,
+      size: current.size,
+      contentType: mime.lookup(originalName) || "application/octet-stream",
+      uploadedAt: current.uploadedAt,
+      updatedAt: new Date().toISOString(),
+    };
+    await this.writeRecord(updated);
+    return this.withUrl(updated);
   }
 
   async remove(id) {

@@ -11,50 +11,7 @@
     <script src="/app.js" defer></script>
   </head>
   <body>
-    <div id="login-view" class="login-view" hidden>
-      <main class="login-shell">
-        <section class="login-panel" aria-labelledby="login-title">
-          <div class="brand brand-login">
-            <span class="brand-mark"><i data-lucide="package-open"></i></span>
-            <span>QuickDrop</span>
-          </div>
-          <div class="login-copy">
-            <p class="eyebrow">PRIVATE CONSOLE</p>
-            <h1 id="login-title">登录资源库</h1>
-          </div>
-          <form id="login-form" class="login-form">
-            <label for="password">访问密码</label>
-            <div class="password-field">
-              <i data-lucide="key-round" aria-hidden="true"></i>
-              <input
-                id="password"
-                name="password"
-                type="password"
-                autocomplete="current-password"
-                required
-                autofocus
-              />
-              <button
-                id="toggle-password"
-                class="icon-button field-action"
-                type="button"
-                aria-label="显示密码"
-                title="显示密码"
-              >
-                <i data-lucide="eye"></i>
-              </button>
-            </div>
-            <p id="login-error" class="form-error" role="alert" hidden></p>
-            <button id="login-button" class="primary-button login-button" type="submit">
-              <span>进入资源库</span>
-              <i data-lucide="arrow-right"></i>
-            </button>
-          </form>
-        </section>
-      </main>
-    </div>
-
-    <div id="app-view" class="app-view" hidden>
+    <div class="app-view">
       <header class="topbar">
         <div class="topbar-inner">
           <a class="brand" href="/" aria-label="QuickDrop 首页">
@@ -63,9 +20,6 @@
           </a>
           <div class="topbar-actions">
             <span class="service-status"><span class="status-dot"></span>在线</span>
-            <button id="logout-button" class="icon-button topbar-button" type="button" aria-label="退出登录" title="退出登录">
-              <i data-lucide="log-out"></i>
-            </button>
           </div>
         </div>
       </header>
@@ -131,6 +85,21 @@
         </section>
       </main>
     </div>
+
+    <dialog id="rename-dialog" class="confirm-dialog rename-dialog">
+      <form method="dialog">
+        <span class="dialog-icon rename-icon"><i data-lucide="pencil"></i></span>
+        <h2>重命名资源</h2>
+        <label class="rename-field" for="rename-input">
+          <span>文件名</span>
+          <input id="rename-input" type="text" maxlength="180" autocomplete="off" required />
+        </label>
+        <div class="dialog-actions">
+          <button class="secondary-button" value="cancel">取消</button>
+          <button class="primary-button" value="confirm">保存</button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog id="delete-dialog" class="confirm-dialog">
       <form method="dialog">

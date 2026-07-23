@@ -2,6 +2,7 @@ const state = {
   files: [],
   limits: null,
   pendingDelete: null,
+  pendingRename: null,
   queue: [],
   query: "",
   totalBytes: 0,
@@ -9,27 +10,20 @@ const state = {
 };
 
 const elements = {
-  appView: document.querySelector("#app-view"),
   chooseButton: document.querySelector("#choose-button"),
-  confirmDelete: document.querySelector("#confirm-delete"),
   deleteDialog: document.querySelector("#delete-dialog"),
   deleteFilename: document.querySelector("#delete-filename"),
   dropZone: document.querySelector("#drop-zone"),
   fileCount: document.querySelector("#file-count"),
   fileInput: document.querySelector("#file-input"),
   fileLimit: document.querySelector("#file-limit"),
-  loginButton: document.querySelector("#login-button"),
-  loginError: document.querySelector("#login-error"),
-  loginForm: document.querySelector("#login-form"),
-  loginView: document.querySelector("#login-view"),
-  logoutButton: document.querySelector("#logout-button"),
-  password: document.querySelector("#password"),
+  renameDialog: document.querySelector("#rename-dialog"),
+  renameInput: document.querySelector("#rename-input"),
   resourceList: document.querySelector("#resource-list"),
   resourceSummary: document.querySelector("#resource-summary"),
   searchInput: document.querySelector("#search-input"),
   storageUsed: document.querySelector("#storage-used"),
   toastRegion: document.querySelector("#toast-region"),
-  togglePassword: document.querySelector("#toggle-password"),
   uploadQueue: document.querySelector("#upload-queue"),
 };
 
@@ -77,7 +71,7 @@ function showToast(message, kind = "success") {
 }
 
 async function api(path, options = {}) {
-  const request = { credentials: "same-origin", ...options };
+  const request = { ...options };
   request.headers = new Headers(request.headers || {});
   if (request.body && !(request.body instanceof FormData)) {
     request.headers.set("content-type", "application/json");
@@ -85,24 +79,7 @@ async function api(path, options = {}) {
   if (request.method && request.method !== "GET") {
     request.headers.set("x-quickdrop-request", "1");
   }
-
-  const response = await fetch(path, request);
-  if (response.status === 401 && path !== "/api/login") showLogin();
-  return response;
-}
-
-function showLogin() {
-  elements.appView.hidden = true;
-  elements.loginView.hidden = false;
-  elements.password.value = "";
-  elements.password.focus();
-  refreshIcons();
-}
-
-function showApp() {
-  elements.loginView.hidden = true;
-  elements.appView.hidden = false;
-  refreshIcons();
+  return fetch(path, request);
 }
 
 async function loadFiles() {
@@ -177,6 +154,7 @@ function renderFiles() {
             <div class="row-actions">
               <button class="icon-button copy-action" type="button" data-action="copy" aria-label="复制链接" title="复制链接"><i data-lucide="copy"></i></button>
               <a class="icon-button open-action" href="${safeUrl}" target="_blank" rel="noopener" aria-label="打开资源" title="打开资源"><i data-lucide="external-link"></i></a>
+              <button class="icon-button rename-action" type="button" data-action="rename" aria-label="重命名资源" title="重命名资源"><i data-lucide="pencil"></i></button>
               <button class="icon-button delete-action" type="button" data-action="delete" aria-label="删除资源" title="删除资源"><i data-lucide="trash-2"></i></button>
             </div>
           </article>`;
@@ -218,7 +196,6 @@ function uploadOne(item) {
     const request = new XMLHttpRequest();
     request.open("POST", "/api/files");
     request.setRequestHeader("X-QuickDrop-Request", "1");
-    request.withCredentials = true;
 
     item.status = "uploading";
     renderQueue();
@@ -247,7 +224,6 @@ function uploadOne(item) {
       } else {
         item.status = "error";
         item.error = payload?.error?.message || "上传失败";
-        if (request.status === 401) showLogin();
       }
       renderQueue();
       resolve(item.status === "done");
@@ -322,42 +298,6 @@ async function copyText(value) {
   }
 }
 
-elements.loginForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  elements.loginError.hidden = true;
-  elements.loginButton.disabled = true;
-  const response = await api("/api/login", {
-    method: "POST",
-    body: JSON.stringify({ password: elements.password.value }),
-  });
-  elements.loginButton.disabled = false;
-
-  if (!response.ok) {
-    const payload = await response.json().catch(() => null);
-    elements.loginError.textContent = payload?.error?.message || "登录失败";
-    elements.loginError.hidden = false;
-    elements.password.select();
-    return;
-  }
-
-  showApp();
-  await loadFiles();
-});
-
-elements.togglePassword.addEventListener("click", () => {
-  const showing = elements.password.type === "text";
-  elements.password.type = showing ? "password" : "text";
-  elements.togglePassword.setAttribute("aria-label", showing ? "显示密码" : "隐藏密码");
-  elements.togglePassword.setAttribute("title", showing ? "显示密码" : "隐藏密码");
-  elements.togglePassword.innerHTML = `<i data-lucide="${showing ? "eye" : "eye-off"}"></i>`;
-  refreshIcons();
-});
-
-elements.logoutButton.addEventListener("click", async () => {
-  await api("/api/logout", { method: "POST" });
-  showLogin();
-});
-
 elements.chooseButton.addEventListener("click", (event) => {
   event.stopPropagation();
   elements.fileInput.click();
@@ -396,7 +336,6 @@ for (const eventName of ["dragleave", "drop"]) {
 elements.dropZone.addEventListener("drop", (event) => addFiles(event.dataTransfer.files));
 
 document.addEventListener("paste", (event) => {
-  if (elements.appView.hidden) return;
   const files = event.clipboardData?.files;
   if (files?.length) addFiles(files);
 });
@@ -418,11 +357,51 @@ elements.resourceList.addEventListener("click", async (event) => {
     showToast("链接已复制");
   }
 
+  if (action.dataset.action === "rename") {
+    state.pendingRename = file;
+    elements.renameInput.value = file.originalName;
+    elements.renameDialog.returnValue = "";
+    elements.renameDialog.showModal();
+    elements.renameInput.focus();
+    elements.renameInput.select();
+  }
+
   if (action.dataset.action === "delete") {
     state.pendingDelete = file;
     elements.deleteFilename.textContent = file.originalName;
+    elements.deleteDialog.returnValue = "";
     elements.deleteDialog.showModal();
   }
+});
+
+elements.renameDialog.addEventListener("close", async () => {
+  if (elements.renameDialog.returnValue !== "confirm" || !state.pendingRename) {
+    state.pendingRename = null;
+    return;
+  }
+
+  const file = state.pendingRename;
+  const originalName = elements.renameInput.value.trim();
+  state.pendingRename = null;
+  if (!originalName) {
+    showToast("文件名不能为空", "error");
+    return;
+  }
+
+  const response = await api(`/api/files/${file.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ originalName }),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    showToast(payload?.error?.message || "重命名失败", "error");
+    return;
+  }
+
+  const updated = (await response.json()).file;
+  state.files = state.files.map((item) => (item.id === updated.id ? updated : item));
+  renderFiles();
+  showToast("资源名称和链接已更新");
 });
 
 elements.deleteDialog.addEventListener("close", async () => {
@@ -448,15 +427,9 @@ elements.deleteDialog.addEventListener("close", async () => {
 async function initialize() {
   refreshIcons();
   try {
-    const response = await api("/api/session");
-    const session = response.ok ? await response.json() : { authenticated: false };
-    if (!session.authenticated) return showLogin();
-    showApp();
     await loadFiles();
   } catch {
-    showLogin();
-    elements.loginError.textContent = "无法连接服务器";
-    elements.loginError.hidden = false;
+    showToast("无法连接服务器", "error");
   }
 }
 

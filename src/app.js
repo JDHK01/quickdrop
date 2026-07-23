@@ -1,10 +1,8 @@
 const crypto = require("node:crypto");
 const path = require("node:path");
 const express = require("express");
-const { rateLimit } = require("express-rate-limit");
 const helmet = require("helmet");
 const multer = require("multer");
-const { createAuth } = require("./auth");
 const { FileStore } = require("./storage");
 
 const INLINE_CONTENT_TYPES = new Set([
@@ -44,12 +42,10 @@ async function createApp(config) {
   const app = express();
   const store = new FileStore(config.dataDir, config.publicBaseUrl);
   await store.init();
-  const auth = createAuth(config);
   const publicDir = path.join(__dirname, "..", "public");
   const lucideDir = path.join(__dirname, "..", "node_modules", "lucide", "dist", "umd");
 
   app.disable("x-powered-by");
-  if (config.trustProxy) app.set("trust proxy", 1);
   app.use(
     helmet({
       contentSecurityPolicy: {
@@ -64,11 +60,11 @@ async function createApp(config) {
           objectSrc: ["'none'"],
           scriptSrc: ["'self'"],
           styleSrc: ["'self'"],
-          upgradeInsecureRequests: config.secureCookie ? [] : null,
+          upgradeInsecureRequests: config.httpsEnabled ? [] : null,
         },
       },
       crossOriginEmbedderPolicy: false,
-      strictTransportSecurity: config.secureCookie ? undefined : false,
+      strictTransportSecurity: config.httpsEnabled ? undefined : false,
     }),
   );
   app.use(express.json({ limit: "16kb" }));
@@ -77,35 +73,8 @@ async function createApp(config) {
     res.json({ status: true, service: "quickdrop", version: "1.0.0" });
   });
 
-  const loginLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    limit: 10,
-    standardHeaders: "draft-8",
-    legacyHeaders: false,
-    skipSuccessfulRequests: true,
-    message: { error: { code: "RATE_LIMITED", message: "尝试次数过多，请稍后再试" } },
-  });
-
-  app.get("/api/session", (req, res) => {
-    res.json({ authenticated: auth.isAuthenticated(req) });
-  });
-
-  app.post("/api/login", loginLimiter, requireAppRequest, (req, res) => {
-    if (!auth.passwordMatches(req.body?.password ?? "")) {
-      return res.status(401).json({ error: { code: "INVALID_PASSWORD", message: "密码不正确" } });
-    }
-    auth.setSessionCookie(res);
-    res.json({ authenticated: true });
-  });
-
-  app.post("/api/logout", auth.requireAuth, requireAppRequest, (req, res) => {
-    auth.clearSessionCookie(res);
-    res.status(204).end();
-  });
-
   app.get(
     "/api/files",
-    auth.requireAuth,
     asyncRoute(async (req, res) => {
       const files = await store.list();
       res.json({
@@ -113,6 +82,17 @@ async function createApp(config) {
         totalBytes: files.reduce((total, file) => total + file.size, 0),
         limits: { maxFileSizeMb: config.maxFileSizeMb, maxFiles: config.maxFiles },
       });
+    }),
+  );
+
+  app.get(
+    "/api/files/:id",
+    asyncRoute(async (req, res) => {
+      const file = await store.get(req.params.id);
+      if (!file) {
+        return res.status(404).json({ error: { code: "NOT_FOUND", message: "文件不存在" } });
+      }
+      res.json({ file });
     }),
   );
 
@@ -129,7 +109,7 @@ async function createApp(config) {
     },
   }).array("files", config.maxFiles);
 
-  app.post("/api/files", auth.requireAuth, requireAppRequest, (req, res, next) => {
+  app.post("/api/files", requireAppRequest, (req, res, next) => {
     const contentLength = Number.parseInt(req.get("content-length") || "0", 10);
     if (Number.isFinite(contentLength) && contentLength > config.maxRequestBytes) {
       return res.status(413).json({ error: { code: "REQUEST_TOO_LARGE", message: "上传内容过大" } });
@@ -162,9 +142,25 @@ async function createApp(config) {
     });
   });
 
+  app.patch(
+    "/api/files/:id",
+    requireAppRequest,
+    asyncRoute(async (req, res) => {
+      if (typeof req.body?.originalName !== "string" || !req.body.originalName.trim()) {
+        return res.status(400).json({
+          error: { code: "INVALID_NAME", message: "文件名不能为空" },
+        });
+      }
+      const file = await store.rename(req.params.id, req.body.originalName);
+      if (!file) {
+        return res.status(404).json({ error: { code: "NOT_FOUND", message: "文件不存在" } });
+      }
+      res.json({ file });
+    }),
+  );
+
   app.delete(
     "/api/files/:id",
-    auth.requireAuth,
     requireAppRequest,
     asyncRoute(async (req, res) => {
       if (!(await store.remove(req.params.id))) {
@@ -178,6 +174,9 @@ async function createApp(config) {
     const record = await store.get(req.params.id);
     if (!record) {
       return res.status(404).json({ error: { code: "NOT_FOUND", message: "文件不存在" } });
+    }
+    if (req.params.name && req.params.name !== record.originalName) {
+      return res.redirect(308, record.url);
     }
 
     const disposition = INLINE_CONTENT_TYPES.has(record.contentType) ? "inline" : "attachment";
