@@ -64,9 +64,11 @@ async function createApp(config) {
           objectSrc: ["'none'"],
           scriptSrc: ["'self'"],
           styleSrc: ["'self'"],
+          upgradeInsecureRequests: config.secureCookie ? [] : null,
         },
       },
       crossOriginEmbedderPolicy: false,
+      strictTransportSecurity: config.secureCookie ? undefined : false,
     }),
   );
   app.use(express.json({ limit: "16kb" }));

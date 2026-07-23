@@ -40,6 +40,8 @@ test("reports health and protects file administration", async () => {
   const health = await request("/health");
   assert.equal(health.status, 200);
   assert.deepEqual(await health.json(), { status: true, service: "quickdrop", version: "1.0.0" });
+  assert.doesNotMatch(health.headers.get("content-security-policy"), /upgrade-insecure-requests/);
+  assert.equal(health.headers.get("strict-transport-security"), null);
 
   const files = await request("/api/files");
   assert.equal(files.status, 401);

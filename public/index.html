@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#171a18" />
+    <title>QuickDrop</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/vendor/lucide.min.js" defer></script>
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <div id="login-view" class="login-view" hidden>
+      <main class="login-shell">
+        <section class="login-panel" aria-labelledby="login-title">
+          <div class="brand brand-login">
+            <span class="brand-mark"><i data-lucide="package-open"></i></span>
+            <span>QuickDrop</span>
+          </div>
+          <div class="login-copy">
+            <p class="eyebrow">PRIVATE CONSOLE</p>
+            <h1 id="login-title">登录资源库</h1>
+          </div>
+          <form id="login-form" class="login-form">
+            <label for="password">访问密码</label>
+            <div class="password-field">
+              <i data-lucide="key-round" aria-hidden="true"></i>
+              <input
+                id="password"
+                name="password"
+                type="password"
+                autocomplete="current-password"
+                required
+                autofocus
+              />
+              <button
+                id="toggle-password"
+                class="icon-button field-action"
+                type="button"
+                aria-label="显示密码"
+                title="显示密码"
+              >
+                <i data-lucide="eye"></i>
+              </button>
+            </div>
+            <p id="login-error" class="form-error" role="alert" hidden></p>
+            <button id="login-button" class="primary-button login-button" type="submit">
+              <span>进入资源库</span>
+              <i data-lucide="arrow-right"></i>
+            </button>
+          </form>
+        </section>
+      </main>
+    </div>
+
+    <div id="app-view" class="app-view" hidden>
+      <header class="topbar">
+        <div class="topbar-inner">
+          <a class="brand" href="/" aria-label="QuickDrop 首页">
+            <span class="brand-mark"><i data-lucide="package-open"></i></span>
+            <span>QuickDrop</span>
+          </a>
+          <div class="topbar-actions">
+            <span class="service-status"><span class="status-dot"></span>在线</span>
+            <button id="logout-button" class="icon-button topbar-button" type="button" aria-label="退出登录" title="退出登录">
+              <i data-lucide="log-out"></i>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="workspace-heading" aria-labelledby="library-title">
+          <div>
+            <p class="eyebrow">RESOURCE LIBRARY</p>
+            <h1 id="library-title">资源库</h1>
+          </div>
+          <div class="stats" aria-label="资源统计">
+            <div class="stat">
+              <span id="file-count" class="stat-value">0</span>
+              <span class="stat-label">资源</span>
+            </div>
+            <div class="stat">
+              <span id="storage-used" class="stat-value">0 B</span>
+              <span class="stat-label">已存储</span>
+            </div>
+            <div class="stat">
+              <span id="file-limit" class="stat-value">--</span>
+              <span class="stat-label">单文件上限</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="upload-tool" aria-labelledby="upload-title">
+          <div
+            id="drop-zone"
+            class="drop-zone"
+            tabindex="0"
+            role="button"
+            aria-labelledby="upload-title upload-note"
+          >
+            <input id="file-input" type="file" multiple hidden />
+            <span class="upload-icon"><i data-lucide="cloud-upload"></i></span>
+            <div class="drop-copy">
+              <h2 id="upload-title">拖放文件到这里</h2>
+              <p id="upload-note">也可以粘贴剪贴板中的图片或文件</p>
+            </div>
+            <button id="choose-button" class="secondary-button" type="button">
+              <i data-lucide="folder-open"></i>
+              <span>选择文件</span>
+            </button>
+          </div>
+          <div id="upload-queue" class="upload-queue" aria-live="polite" hidden></div>
+        </section>
+
+        <section class="resources" aria-labelledby="resources-title">
+          <div class="section-toolbar">
+            <div>
+              <h2 id="resources-title">全部资源</h2>
+              <p id="resource-summary">0 个文件</p>
+            </div>
+            <label class="search-field" for="search-input">
+              <i data-lucide="search" aria-hidden="true"></i>
+              <input id="search-input" type="search" placeholder="搜索文件名" autocomplete="off" />
+              <span class="sr-only">搜索文件名</span>
+            </label>
+          </div>
+
+          <div id="resource-list" class="resource-list" aria-live="polite"></div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="delete-dialog" class="confirm-dialog">
+      <form method="dialog">
+        <span class="dialog-icon"><i data-lucide="trash-2"></i></span>
+        <h2>删除资源？</h2>
+        <p id="delete-filename"></p>
+        <div class="dialog-actions">
+          <button class="secondary-button" value="cancel">取消</button>
+          <button id="confirm-delete" class="danger-button" value="confirm">删除</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  </body>
+</html>
