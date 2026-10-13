@@ -18,10 +18,11 @@ before(async () => {
   dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "quickdrop-test-"));
   const config = loadConfig({
     dataDir,
-    maxFileSizeMb: 1,
     maxFiles: 2,
     publicBaseUrl: "http://127.0.0.1",
   });
+  assert.equal("maxFileSizeBytes" in config, false);
+  assert.equal(config.maxPreviewChars, 65536);
   const app = await createApp(config);
   server = app.listen(0, "127.0.0.1");
   await new Promise((resolve) => server.once("listening", resolve));
@@ -40,17 +41,96 @@ test("reports health and exposes file administration without login", async () =>
   assert.doesNotMatch(health.headers.get("content-security-policy"), /upgrade-insecure-requests/);
   assert.equal(health.headers.get("strict-transport-security"), null);
 
+  const home = await request("/");
+  assert.equal(home.status, 200);
+  assert.equal(home.headers.get("cache-control"), "no-store");
+  const homeHtml = await home.text();
+  assert.match(homeHtml, /\/styles\.css\?v=/);
+  assert.match(homeHtml, /\/app\.js\?v=/);
+
   const files = await request("/api/files");
   assert.equal(files.status, 200);
   assert.deepEqual(await files.json(), {
     files: [],
     totalBytes: 0,
-    limits: { maxFileSizeMb: 1, maxFiles: 2 },
+    limits: { maxFiles: 2 },
   });
+
+  const appScript = await request("/app.js");
+  assert.equal(appScript.status, 200);
+  assert.equal(appScript.headers.get("cache-control"), "no-cache");
+  const appScriptText = await appScript.text();
+  assert.match(appScriptText, /data-action="copy-markdown"/);
+  assert.match(appScriptText, /new EventSource\("\/api\/preview\/events"\)/);
+  assert.match(appScriptText, /handleFilePaste/);
+  assert.match(appScriptText, /renameForm\.addEventListener\("submit"/);
+  assert.doesNotMatch(appScriptText, /renameDialog\.addEventListener\("close", async/);
+
+  assert.match(homeHtml, /id="rename-form"/);
+  assert.match(homeHtml, /id="preview-input"/);
+  assert.match(homeHtml, /id="preview-copy"/);
+  assert.match(homeHtml, /id="preview-clear"/);
+  assert.doesNotMatch(homeHtml, /LIVE PREVIEW/);
+  assert.doesNotMatch(homeHtml, /在相邻主机打开同一页面/);
+  assert.doesNotMatch(homeHtml, /在这里输入需要/);
+  assert.match(homeHtml, /id="rename-submit"[^>]+type="submit"/);
+  assert.doesNotMatch(homeHtml, /id="rename-form"[^>]+method="dialog"/);
+
+  const filePondScript = await request("/vendor/filepond/filepond.min.js");
+  assert.equal(filePondScript.status, 200);
+  assert.equal(filePondScript.headers.get("cache-control"), "no-cache");
+});
+
+test("reads, updates, and streams the shared live preview", async () => {
+  const initial = await request("/api/preview");
+  assert.equal(initial.status, 200);
+  assert.deepEqual((await initial.json()).preview, {
+    text: "",
+    version: 0,
+    updatedAt: null,
+  });
+
+  const rejected = await request("/api/preview", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ text: "blocked" }),
+  });
+  assert.equal(rejected.status, 403);
+
+  const controller = new AbortController();
+  const stream = await request("/api/preview/events", { signal: controller.signal });
+  assert.equal(stream.status, 200);
+  assert.match(stream.headers.get("content-type"), /^text\/event-stream/);
+  const reader = stream.body.getReader();
+  const decoder = new TextDecoder();
+  const firstChunk = decoder.decode((await reader.read()).value);
+  assert.match(firstChunk, /event: preview/);
+  assert.match(firstChunk, /"version":0/);
+
+  const updated = await request("/api/preview", {
+    method: "PUT",
+    headers: { "content-type": "application/json", "x-quickdrop-request": "1" },
+    body: JSON.stringify({ text: "动态内容\n第二行" }),
+  });
+  assert.equal(updated.status, 200);
+  const updatedPreview = (await updated.json()).preview;
+  assert.equal(updatedPreview.text, "动态内容\n第二行");
+  assert.equal(updatedPreview.version, 1);
+
+  const streamedChunk = decoder.decode((await reader.read()).value);
+  assert.match(streamedChunk, /"text":"动态内容\\n第二行"/);
+  assert.match(streamedChunk, /"version":1/);
+  await reader.cancel();
+  controller.abort();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const persisted = await request("/api/preview");
+  assert.deepEqual((await persisted.json()).preview, updatedPreview);
 });
 
 test("uploads, lists, serves, and deletes a file", async () => {
   const form = new FormData();
+  form.append("files", "{}");
   form.append("files", new Blob(["hello from quickdrop"], { type: "text/plain" }), "测试 文档.txt");
 
   const upload = await request("/api/files", {

@@ -30,6 +30,8 @@ class FileStore {
   constructor(dataDir, publicBaseUrl) {
     this.filesDir = path.join(dataDir, "files");
     this.metaDir = path.join(dataDir, "meta");
+    this.previewPath = path.join(dataDir, "preview.json");
+    this.previewWrite = Promise.resolve();
     this.publicBaseUrl = publicBaseUrl;
   }
 
@@ -38,6 +40,56 @@ class FileStore {
       fs.mkdir(this.filesDir, { recursive: true }),
       fs.mkdir(this.metaDir, { recursive: true }),
     ]);
+  }
+
+  async getPreview() {
+    try {
+      const preview = JSON.parse(await fs.readFile(this.previewPath, "utf8"));
+      if (
+        !preview ||
+        typeof preview.text !== "string" ||
+        !Number.isSafeInteger(preview.version) ||
+        preview.version < 0 ||
+        (preview.updatedAt !== null && typeof preview.updatedAt !== "string")
+      ) {
+        return { text: "", version: 0, updatedAt: null };
+      }
+      return {
+        text: preview.text,
+        version: preview.version,
+        updatedAt: preview.updatedAt,
+      };
+    } catch (error) {
+      if (error.code === "ENOENT" || error instanceof SyntaxError) {
+        return { text: "", version: 0, updatedAt: null };
+      }
+      throw error;
+    }
+  }
+
+  updatePreview(text) {
+    const operation = this.previewWrite.then(async () => {
+      const current = await this.getPreview();
+      const updated = {
+        text,
+        version: current.version + 1,
+        updatedAt: new Date().toISOString(),
+      };
+      const temporaryPath = `${this.previewPath}.${crypto.randomUUID()}.tmp`;
+      try {
+        await fs.writeFile(temporaryPath, `${JSON.stringify(updated)}\n`, {
+          flag: "wx",
+          mode: 0o600,
+        });
+        await fs.rename(temporaryPath, this.previewPath);
+      } catch (error) {
+        await fs.rm(temporaryPath, { force: true });
+        throw error;
+      }
+      return updated;
+    });
+    this.previewWrite = operation.catch(() => {});
+    return operation;
   }
 
   metadataPath(id) {

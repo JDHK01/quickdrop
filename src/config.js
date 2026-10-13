@@ -19,15 +19,15 @@ function loadConfig(overrides = {}) {
     throw new Error("PUBLIC_BASE_URL must be an absolute URL");
   }
 
-  const maxFileSizeMb = parsePositiveInt(
-    overrides.maxFileSizeMb ?? process.env.MAX_FILE_SIZE_MB,
-    256,
-    "MAX_FILE_SIZE_MB",
-  );
   const maxFiles = parsePositiveInt(
     overrides.maxFiles ?? process.env.MAX_FILES_PER_UPLOAD,
     10,
     "MAX_FILES_PER_UPLOAD",
+  );
+  const maxPreviewChars = parsePositiveInt(
+    overrides.maxPreviewChars ?? process.env.MAX_PREVIEW_CHARS,
+    65536,
+    "MAX_PREVIEW_CHARS",
   );
 
   return {
@@ -36,10 +36,8 @@ function loadConfig(overrides = {}) {
     dataDir: path.resolve(overrides.dataDir ?? process.env.DATA_DIR ?? "data"),
     publicBaseUrl,
     httpsEnabled: publicBaseUrl.startsWith("https://"),
-    maxFileSizeMb,
-    maxFileSizeBytes: maxFileSizeMb * 1024 * 1024,
     maxFiles,
-    maxRequestBytes: maxFileSizeMb * 1024 * 1024 * maxFiles + 1024 * 1024,
+    maxPreviewChars,
   };
 }
 

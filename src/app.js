@@ -44,6 +44,12 @@ async function createApp(config) {
   await store.init();
   const publicDir = path.join(__dirname, "..", "public");
   const lucideDir = path.join(__dirname, "..", "node_modules", "lucide", "dist", "umd");
+  const filePondDir = path.join(__dirname, "..", "node_modules", "filepond", "dist");
+  const frontendStaticOptions = {
+    etag: true,
+    maxAge: 0,
+    setHeaders: (res) => res.setHeader("Cache-Control", "no-cache"),
+  };
 
   app.disable("x-powered-by");
   app.use(
@@ -60,6 +66,7 @@ async function createApp(config) {
           objectSrc: ["'none'"],
           scriptSrc: ["'self'"],
           styleSrc: ["'self'"],
+          styleSrcAttr: ["'unsafe-inline'"],
           upgradeInsecureRequests: config.httpsEnabled ? [] : null,
         },
       },
@@ -67,11 +74,84 @@ async function createApp(config) {
       strictTransportSecurity: config.httpsEnabled ? undefined : false,
     }),
   );
-  app.use(express.json({ limit: "16kb" }));
+  app.use(express.json({ limit: "128kb" }));
+
+  const previewClients = new Set();
+  const broadcastPreview = (preview) => {
+    const message = `event: preview\ndata: ${JSON.stringify(preview)}\n\n`;
+    for (const client of previewClients) {
+      try {
+        client.write(message);
+      } catch {
+        previewClients.delete(client);
+      }
+    }
+  };
 
   app.get("/health", (req, res) => {
     res.json({ status: true, service: "quickdrop", version: "1.0.0" });
   });
+
+  app.get(
+    "/api/preview",
+    asyncRoute(async (req, res) => {
+      res.json({ preview: await store.getPreview() });
+    }),
+  );
+
+  app.get(
+    "/api/preview/events",
+    asyncRoute(async (req, res) => {
+      const preview = await store.getPreview();
+      res.set({
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "X-Accel-Buffering": "no",
+      });
+      res.flushHeaders();
+      previewClients.add(res);
+      res.write(`event: preview\ndata: ${JSON.stringify(preview)}\n\n`);
+
+      const heartbeat = setInterval(() => {
+        try {
+          res.write(": keep-alive\n\n");
+        } catch {
+          clearInterval(heartbeat);
+          previewClients.delete(res);
+        }
+      }, 20000);
+
+      req.on("close", () => {
+        clearInterval(heartbeat);
+        previewClients.delete(res);
+      });
+    }),
+  );
+
+  app.put(
+    "/api/preview",
+    requireAppRequest,
+    asyncRoute(async (req, res) => {
+      if (typeof req.body?.text !== "string") {
+        return res.status(400).json({
+          error: { code: "INVALID_PREVIEW", message: "预览内容必须是文本" },
+        });
+      }
+      if (req.body.text.length > config.maxPreviewChars) {
+        return res.status(413).json({
+          error: {
+            code: "PREVIEW_TOO_LARGE",
+            message: `预览内容不能超过 ${config.maxPreviewChars} 个字符`,
+          },
+        });
+      }
+
+      const preview = await store.updatePreview(req.body.text);
+      broadcastPreview(preview);
+      res.json({ preview });
+    }),
+  );
 
   app.get(
     "/api/files",
@@ -80,7 +160,7 @@ async function createApp(config) {
       res.json({
         files,
         totalBytes: files.reduce((total, file) => total + file.size, 0),
-        limits: { maxFileSizeMb: config.maxFileSizeMb, maxFiles: config.maxFiles },
+        limits: { maxFiles: config.maxFiles },
       });
     }),
   );
@@ -102,28 +182,18 @@ async function createApp(config) {
       filename: (req, file, callback) => callback(null, crypto.randomBytes(16).toString("hex")),
     }),
     limits: {
-      fileSize: config.maxFileSizeBytes,
       files: config.maxFiles,
-      fields: 0,
-      parts: config.maxFiles,
+      fields: config.maxFiles,
+      parts: config.maxFiles * 2,
     },
   }).array("files", config.maxFiles);
 
   app.post("/api/files", requireAppRequest, (req, res, next) => {
-    const contentLength = Number.parseInt(req.get("content-length") || "0", 10);
-    if (Number.isFinite(contentLength) && contentLength > config.maxRequestBytes) {
-      return res.status(413).json({ error: { code: "REQUEST_TOO_LARGE", message: "上传内容过大" } });
-    }
-
     upload(req, res, async (error) => {
       if (error) {
         await Promise.all((req.files || []).map((file) => store.cleanUpload(file)));
-        const tooLarge = error.code === "LIMIT_FILE_SIZE";
-        return res.status(tooLarge ? 413 : 400).json({
-          error: {
-            code: tooLarge ? "FILE_TOO_LARGE" : "UPLOAD_REJECTED",
-            message: tooLarge ? `单个文件不能超过 ${config.maxFileSizeMb} MB` : "上传请求无效",
-          },
+        return res.status(400).json({
+          error: { code: "UPLOAD_REJECTED", message: "上传请求无效" },
         });
       }
 
@@ -198,9 +268,13 @@ async function createApp(config) {
   });
 
   app.get(["/f/:id", "/f/:id/:name"], serveFile);
-  app.use("/vendor", express.static(lucideDir, { immutable: true, maxAge: "1y" }));
-  app.use(express.static(publicDir, { index: false, maxAge: "1h" }));
-  app.get("/", (req, res) => res.sendFile(path.join(publicDir, "index.html")));
+  app.use("/vendor/lucide", express.static(lucideDir, frontendStaticOptions));
+  app.use("/vendor/filepond", express.static(filePondDir, frontendStaticOptions));
+  app.use(express.static(publicDir, { ...frontendStaticOptions, index: false }));
+  app.get("/", (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.sendFile(path.join(publicDir, "index.html"), { cacheControl: false });
+  });
 
   app.use((req, res) => {
     const isApi = req.path.startsWith("/api/");

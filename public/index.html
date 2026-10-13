@@ -6,9 +6,11 @@
     <meta name="color-scheme" content="light" />
     <meta name="theme-color" content="#171a18" />
     <title>QuickDrop</title>
-    <link rel="stylesheet" href="/styles.css" />
-    <script src="/vendor/lucide.min.js" defer></script>
-    <script src="/app.js" defer></script>
+    <link rel="stylesheet" href="/vendor/filepond/filepond.min.css?v=4.32.12" />
+    <link rel="stylesheet" href="/styles.css?v=20261010.1" />
+    <script src="/vendor/filepond/filepond.min.js?v=4.32.12" defer></script>
+    <script src="/vendor/lucide/lucide.min.js?v=1.26.0" defer></script>
+    <script src="/app.js?v=20261010.1" defer></script>
   </head>
   <body>
     <div class="app-view">
@@ -40,32 +42,46 @@
               <span class="stat-label">已存储</span>
             </div>
             <div class="stat">
-              <span id="file-limit" class="stat-value">--</span>
-              <span class="stat-label">单文件上限</span>
+              <span class="stat-value">不限</span>
+              <span class="stat-label">单文件大小</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="live-preview" aria-labelledby="live-preview-title">
+          <div class="live-preview-heading">
+            <div>
+              <h2 id="live-preview-title">实时预览</h2>
+            </div>
+            <div class="live-preview-tools">
+              <span id="preview-status" class="preview-status" role="status">正在连接</span>
+              <button id="preview-copy" class="secondary-button" type="button">
+                <i data-lucide="copy"></i>
+                复制内容
+              </button>
+              <button id="preview-clear" class="secondary-button" type="button">
+                <i data-lucide="eraser"></i>
+                清空
+              </button>
+            </div>
+          </div>
+          <div class="live-preview-card">
+            <label class="sr-only" for="preview-input">实时预览内容</label>
+            <textarea
+              id="preview-input"
+              maxlength="65536"
+              spellcheck="false"
+            ></textarea>
+            <div class="live-preview-footer">
+              <span id="preview-meta">0 字符</span>
+              <span>自动同步 · 最多 64K 字符</span>
             </div>
           </div>
         </section>
 
         <section class="upload-tool" aria-labelledby="upload-title">
-          <div
-            id="drop-zone"
-            class="drop-zone"
-            tabindex="0"
-            role="button"
-            aria-labelledby="upload-title upload-note"
-          >
-            <input id="file-input" type="file" multiple hidden />
-            <span class="upload-icon"><i data-lucide="cloud-upload"></i></span>
-            <div class="drop-copy">
-              <h2 id="upload-title">拖放文件到这里</h2>
-              <p id="upload-note">也可以粘贴剪贴板中的图片或文件</p>
-            </div>
-            <button id="choose-button" class="secondary-button" type="button">
-              <i data-lucide="folder-open"></i>
-              <span>选择文件</span>
-            </button>
-          </div>
-          <div id="upload-queue" class="upload-queue" aria-live="polite" hidden></div>
+          <h2 id="upload-title" class="sr-only">上传资源</h2>
+          <input id="file-input" class="filepond" type="file" name="files" multiple />
         </section>
 
         <section class="resources" aria-labelledby="resources-title">
@@ -87,16 +103,24 @@
     </div>
 
     <dialog id="rename-dialog" class="confirm-dialog rename-dialog">
-      <form method="dialog">
+      <form id="rename-form">
         <span class="dialog-icon rename-icon"><i data-lucide="pencil"></i></span>
         <h2>重命名资源</h2>
         <label class="rename-field" for="rename-input">
           <span>文件名</span>
-          <input id="rename-input" type="text" maxlength="180" autocomplete="off" required />
+          <input
+            id="rename-input"
+            type="text"
+            maxlength="180"
+            autocomplete="off"
+            aria-describedby="rename-error"
+            required
+          />
         </label>
+        <p id="rename-error" class="form-error" role="alert" hidden></p>
         <div class="dialog-actions">
-          <button class="secondary-button" value="cancel">取消</button>
-          <button class="primary-button" value="confirm">保存</button>
+          <button id="rename-cancel" class="secondary-button" type="button">取消</button>
+          <button id="rename-submit" class="primary-button" type="submit">保存</button>
         </div>
       </form>
     </dialog>

@@ -3,28 +3,44 @@ const state = {
   limits: null,
   pendingDelete: null,
   pendingRename: null,
-  queue: [],
   query: "",
+  renaming: false,
   totalBytes: 0,
-  uploading: false,
+  uploader: null,
+  preview: {
+    connected: false,
+    dirty: false,
+    eventSource: null,
+    pendingRemote: null,
+    reconnectTimer: null,
+    saveTimer: null,
+    saving: false,
+    text: "",
+    version: 0,
+  },
 };
 
 const elements = {
-  chooseButton: document.querySelector("#choose-button"),
   deleteDialog: document.querySelector("#delete-dialog"),
   deleteFilename: document.querySelector("#delete-filename"),
-  dropZone: document.querySelector("#drop-zone"),
   fileCount: document.querySelector("#file-count"),
   fileInput: document.querySelector("#file-input"),
-  fileLimit: document.querySelector("#file-limit"),
+  previewClear: document.querySelector("#preview-clear"),
+  previewCopy: document.querySelector("#preview-copy"),
+  previewInput: document.querySelector("#preview-input"),
+  previewMeta: document.querySelector("#preview-meta"),
+  previewStatus: document.querySelector("#preview-status"),
+  renameCancel: document.querySelector("#rename-cancel"),
   renameDialog: document.querySelector("#rename-dialog"),
+  renameError: document.querySelector("#rename-error"),
+  renameForm: document.querySelector("#rename-form"),
   renameInput: document.querySelector("#rename-input"),
+  renameSubmit: document.querySelector("#rename-submit"),
   resourceList: document.querySelector("#resource-list"),
   resourceSummary: document.querySelector("#resource-summary"),
   searchInput: document.querySelector("#search-input"),
   storageUsed: document.querySelector("#storage-used"),
   toastRegion: document.querySelector("#toast-region"),
-  uploadQueue: document.querySelector("#upload-queue"),
 };
 
 function refreshIcons() {
@@ -84,7 +100,7 @@ async function api(path, options = {}) {
 
 async function loadFiles() {
   const response = await api("/api/files");
-  if (!response.ok) return;
+  if (!response.ok) throw new Error("Unable to load files");
   const payload = await response.json();
   state.files = payload.files;
   state.totalBytes = payload.totalBytes;
@@ -93,10 +109,121 @@ async function loadFiles() {
   renderFiles();
 }
 
+function setPreviewStatus(message, kind = "idle") {
+  elements.previewStatus.textContent = message;
+  elements.previewStatus.dataset.kind = kind;
+}
+
+function renderPreviewMeta() {
+  const length = Array.from(elements.previewInput.value).length;
+  elements.previewMeta.textContent = `${length} 字符`;
+}
+
+function applyPreview(preview) {
+  state.preview.text = preview.text;
+  state.preview.version = preview.version;
+  state.preview.pendingRemote = null;
+  state.preview.dirty = false;
+  elements.previewInput.value = preview.text;
+  renderPreviewMeta();
+  setPreviewStatus(state.preview.connected ? "已同步" : "已保存", "success");
+}
+
+function receivePreview(preview) {
+  if (!preview || typeof preview.text !== "string") return;
+  if (preview.version <= state.preview.version) return;
+
+  if (state.preview.dirty || state.preview.saving || document.activeElement === elements.previewInput) {
+    state.preview.pendingRemote = preview;
+    setPreviewStatus("远端有更新", "warning");
+    return;
+  }
+
+  applyPreview(preview);
+}
+
+async function loadPreview() {
+  const response = await api("/api/preview");
+  if (!response.ok) throw new Error("Unable to load preview");
+  const payload = await response.json();
+  applyPreview(payload.preview);
+}
+
+function connectPreview() {
+  if (state.preview.eventSource) return;
+  const source = new EventSource("/api/preview/events");
+  state.preview.eventSource = source;
+  source.onopen = () => {
+    state.preview.connected = true;
+    setPreviewStatus("实时连接", "success");
+  };
+  source.addEventListener("preview", (event) => {
+    try {
+      receivePreview(JSON.parse(event.data));
+    } catch (error) {
+      console.error("Invalid preview event", error);
+    }
+  });
+  source.onerror = () => {
+    if (state.preview.eventSource !== source) return;
+    state.preview.connected = false;
+    state.preview.eventSource = null;
+    source.close();
+    setPreviewStatus("重连中...", "warning");
+    if (!state.preview.reconnectTimer) {
+      state.preview.reconnectTimer = window.setTimeout(() => {
+        state.preview.reconnectTimer = null;
+        connectPreview();
+      }, 3000);
+    }
+  };
+}
+
+function schedulePreviewSave() {
+  window.clearTimeout(state.preview.saveTimer);
+  state.preview.saveTimer = window.setTimeout(savePreview, 350);
+}
+
+async function savePreview() {
+  state.preview.saveTimer = null;
+  const text = elements.previewInput.value;
+  state.preview.saving = true;
+  setPreviewStatus("同步中...", "syncing");
+
+  try {
+    const response = await api("/api/preview", {
+      method: "PUT",
+      body: JSON.stringify({ text }),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      setPreviewStatus(payload?.error?.message || "同步失败", "error");
+      return;
+    }
+
+    const preview = (await response.json()).preview;
+    if (elements.previewInput.value !== text) {
+      state.preview.dirty = true;
+      schedulePreviewSave();
+      return;
+    }
+
+    state.preview.text = preview.text;
+    state.preview.version = preview.version;
+    state.preview.pendingRemote = null;
+    state.preview.dirty = false;
+    setPreviewStatus(state.preview.connected ? "已同步" : "已保存", "success");
+  } catch (error) {
+    console.error(error);
+    setPreviewStatus("同步失败", "error");
+  } finally {
+    state.preview.saving = false;
+  }
+}
+
 function renderStats() {
   elements.fileCount.textContent = String(state.files.length);
   elements.storageUsed.textContent = formatBytes(state.totalBytes);
-  elements.fileLimit.textContent = state.limits ? `${state.limits.maxFileSizeMb} MB` : "--";
   elements.resourceSummary.textContent = `${state.files.length} 个文件`;
 }
 
@@ -107,6 +234,30 @@ function iconForFile(file) {
   if (file.contentType === "application/pdf") return "file-text";
   if (file.contentType.includes("zip") || file.contentType.includes("compressed")) return "archive";
   return "file";
+}
+
+function markdownForFile(file) {
+  const label = file.originalName
+    .replace(/\\/g, "\\\\")
+    .replace(/\[/g, "\\[")
+    .replace(/\]/g, "\\]");
+  const url = file.url.replace(/\(/g, "%28").replace(/\)/g, "%29");
+  return `${file.contentType.startsWith("image/") ? "!" : ""}[${label}](${url})`;
+}
+
+function setRenameError(message = "") {
+  elements.renameError.textContent = message;
+  elements.renameError.hidden = !message;
+  elements.renameInput.setAttribute("aria-invalid", String(Boolean(message)));
+}
+
+function setRenameBusy(busy) {
+  state.renaming = busy;
+  elements.renameForm.toggleAttribute("aria-busy", busy);
+  elements.renameInput.disabled = busy;
+  elements.renameCancel.disabled = busy;
+  elements.renameSubmit.disabled = busy;
+  elements.renameSubmit.textContent = busy ? "保存中..." : "保存";
 }
 
 function renderFiles() {
@@ -153,6 +304,7 @@ function renderFiles() {
             <time class="file-meta file-date" datetime="${escapeHtml(file.uploadedAt)}">${formatDate(file.uploadedAt)}</time>
             <div class="row-actions">
               <button class="icon-button copy-action" type="button" data-action="copy" aria-label="复制链接" title="复制链接"><i data-lucide="copy"></i></button>
+              <button class="icon-button markdown-action" type="button" data-action="copy-markdown" aria-label="复制 Markdown" title="复制 Markdown"><i data-lucide="clipboard-copy"></i></button>
               <a class="icon-button open-action" href="${safeUrl}" target="_blank" rel="noopener" aria-label="打开资源" title="打开资源"><i data-lucide="external-link"></i></a>
               <button class="icon-button rename-action" type="button" data-action="rename" aria-label="重命名资源" title="重命名资源"><i data-lucide="pencil"></i></button>
               <button class="icon-button delete-action" type="button" data-action="delete" aria-label="删除资源" title="删除资源"><i data-lucide="trash-2"></i></button>
@@ -163,124 +315,85 @@ function renderFiles() {
   refreshIcons();
 }
 
-function queueStatus(item) {
-  if (item.status === "waiting") return "等待中";
-  if (item.status === "done") return "已完成";
-  if (item.status === "error") return item.error || "上传失败";
-  return `${item.progress}%`;
-}
+function handleFilePaste(event) {
+  if (!state.uploader) return;
+  const items = Array.from(event.clipboardData?.items || []);
+  const files = items
+    .filter((item) => item.kind === "file")
+    .map((item) => item.getAsFile())
+    .filter(Boolean);
+  const fallbackFiles = files.length ? files : Array.from(event.clipboardData?.files || []);
+  if (!fallbackFiles.length) return;
 
-function renderQueue() {
-  elements.uploadQueue.hidden = state.queue.length === 0;
-  elements.uploadQueue.innerHTML = state.queue
-    .map(
-      (item) => `
-        <div class="queue-row">
-          <span class="queue-icon"><i data-lucide="${item.status === "done" ? "check" : item.status === "error" ? "circle-alert" : "file-up"}"></i></span>
-          <div class="queue-name">
-            <strong>${escapeHtml(item.file.name)}</strong>
-            <span>${formatBytes(item.file.size)}</span>
-          </div>
-          <progress max="100" value="${item.progress}">${item.progress}%</progress>
-          <span class="queue-status${item.status === "error" ? " is-error" : ""}">${escapeHtml(queueStatus(item))}</span>
-        </div>`,
-    )
-    .join("");
-  refreshIcons();
-}
-
-function uploadOne(item) {
-  return new Promise((resolve) => {
-    const form = new FormData();
-    form.append("files", item.file, item.file.name);
-    const request = new XMLHttpRequest();
-    request.open("POST", "/api/files");
-    request.setRequestHeader("X-QuickDrop-Request", "1");
-
-    item.status = "uploading";
-    renderQueue();
-
-    request.upload.addEventListener("progress", (event) => {
-      if (!event.lengthComputable) return;
-      item.progress = Math.min(99, Math.round((event.loaded / event.total) * 100));
-      renderQueue();
-    });
-
-    request.addEventListener("load", () => {
-      let payload = null;
-      try {
-        payload = JSON.parse(request.responseText);
-      } catch {
-        payload = null;
-      }
-
-      if (request.status === 201) {
-        item.status = "done";
-        item.progress = 100;
-        state.files.unshift(...payload.files);
-        state.totalBytes += payload.files.reduce((total, file) => total + file.size, 0);
-        renderStats();
-        renderFiles();
-      } else {
-        item.status = "error";
-        item.error = payload?.error?.message || "上传失败";
-      }
-      renderQueue();
-      resolve(item.status === "done");
-    });
-
-    request.addEventListener("error", () => {
-      item.status = "error";
-      item.error = "网络连接失败";
-      renderQueue();
-      resolve(false);
-    });
-
-    request.send(form);
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  state.uploader.addFiles(fallbackFiles).catch((error) => {
+    console.error(error);
+    showToast("粘贴上传失败", "error");
   });
 }
 
-async function processQueue() {
-  if (state.uploading) return;
-  state.uploading = true;
-  let uploaded = 0;
-  for (const item of state.queue.filter((entry) => entry.status === "waiting")) {
-    if (await uploadOne(item)) uploaded += 1;
-  }
-  state.uploading = false;
-  if (uploaded) showToast(`已上传 ${uploaded} 个文件`);
-  if (state.queue.some((item) => item.status === "waiting")) {
-    processQueue();
-    return;
-  }
-  window.setTimeout(() => {
-    state.queue = state.queue.filter((item) => item.status !== "done");
-    renderQueue();
-  }, 2200);
-}
+document.addEventListener("paste", handleFilePaste, true);
 
-function addFiles(fileList) {
-  const files = Array.from(fileList || []);
-  if (!files.length) return;
-
-  const maxBytes = state.limits ? state.limits.maxFileSizeMb * 1024 * 1024 : Infinity;
-  const accepted = [];
-  for (const file of files) {
-    if (file.size > maxBytes) {
-      showToast(`${file.name} 超过单文件上限`, "error");
-      continue;
-    }
-    accepted.push({
-      file,
-      id: `${Date.now()}-${Math.random()}`,
-      progress: 0,
-      status: "waiting",
-    });
+function initializeUploader() {
+  if (!window.FilePond) {
+    throw new Error("FilePond failed to load");
   }
 
-  state.queue.push(...accepted);
-  renderQueue();
-  processQueue();
+  const maxFiles = state.limits?.maxFiles || 10;
+  state.uploader = window.FilePond.create(elements.fileInput, {
+    allowBrowse: true,
+    allowDrop: true,
+    allowMultiple: true,
+    allowPaste: true,
+    allowRevert: false,
+    credits: false,
+    instantUpload: true,
+    maxFiles,
+    maxParallelUploads: 2,
+    labelIdle:
+      '<span class="filepond-main-label">拖放文件到这里</span><span class="filepond-sub-label">或 <span class="filepond--label-action">选择文件</span>，也支持粘贴</span>',
+    labelInvalidField: "包含无效文件",
+    labelFileWaitingForSize: "正在读取大小",
+    labelFileSizeNotAvailable: "大小不可用",
+    labelFileProcessing: "上传中",
+    labelFileProcessingComplete: "上传完成",
+    labelFileProcessingAborted: "上传已取消",
+    labelFileProcessingError: "上传失败",
+    labelFileRemoveError: "移除失败",
+    labelTapToCancel: "点击取消",
+    labelTapToRetry: "点击重试",
+    labelButtonRemoveItem: "移除",
+    labelButtonAbortItemProcessing: "取消上传",
+    labelButtonRetryItemProcessing: "重试上传",
+    server: {
+      process: {
+        url: "/api/files",
+        method: "POST",
+        headers: { "X-QuickDrop-Request": "1" },
+        onload: (response) => {
+          const payload = JSON.parse(response);
+          return payload.files[0].id;
+        },
+        onerror: (response) => {
+          try {
+            return JSON.parse(response).error?.message || "上传失败";
+          } catch {
+            return "上传失败";
+          }
+        },
+      },
+    },
+    onprocessfile: async (error, file) => {
+      if (error) {
+        showToast(error.body || "上传失败", "error");
+        return;
+      }
+      await loadFiles();
+      showToast(`${file.filename} 已上传`);
+      window.setTimeout(() => state.uploader?.removeFile(file.id, { revert: false }), 1400);
+    },
+  });
 }
 
 async function copyText(value) {
@@ -298,46 +411,32 @@ async function copyText(value) {
   }
 }
 
-elements.chooseButton.addEventListener("click", (event) => {
-  event.stopPropagation();
-  elements.fileInput.click();
+elements.previewInput.addEventListener("input", () => {
+  state.preview.dirty = true;
+  renderPreviewMeta();
+  setPreviewStatus("等待同步...", "syncing");
+  schedulePreviewSave();
 });
 
-elements.fileInput.addEventListener("change", () => {
-  addFiles(elements.fileInput.files);
-  elements.fileInput.value = "";
-});
-
-elements.dropZone.addEventListener("click", (event) => {
-  if (!event.target.closest("button")) elements.fileInput.click();
-});
-
-elements.dropZone.addEventListener("keydown", (event) => {
-  if (event.key === "Enter" || event.key === " ") {
-    event.preventDefault();
-    elements.fileInput.click();
+elements.previewInput.addEventListener("blur", () => {
+  if (state.preview.pendingRemote && !state.preview.dirty && !state.preview.saving) {
+    applyPreview(state.preview.pendingRemote);
   }
 });
 
-for (const eventName of ["dragenter", "dragover"]) {
-  elements.dropZone.addEventListener(eventName, (event) => {
-    event.preventDefault();
-    elements.dropZone.classList.add("is-dragging");
-  });
-}
+elements.previewCopy.addEventListener("click", async () => {
+  await copyText(elements.previewInput.value);
+  showToast("预览内容已复制");
+});
 
-for (const eventName of ["dragleave", "drop"]) {
-  elements.dropZone.addEventListener(eventName, (event) => {
-    event.preventDefault();
-    elements.dropZone.classList.remove("is-dragging");
-  });
-}
-
-elements.dropZone.addEventListener("drop", (event) => addFiles(event.dataTransfer.files));
-
-document.addEventListener("paste", (event) => {
-  const files = event.clipboardData?.files;
-  if (files?.length) addFiles(files);
+elements.previewClear.addEventListener("click", () => {
+  window.clearTimeout(state.preview.saveTimer);
+  state.preview.saveTimer = null;
+  elements.previewInput.value = "";
+  state.preview.dirty = true;
+  renderPreviewMeta();
+  void savePreview();
+  elements.previewInput.focus();
 });
 
 elements.searchInput.addEventListener("input", () => {
@@ -355,10 +454,19 @@ elements.resourceList.addEventListener("click", async (event) => {
   if (action.dataset.action === "copy") {
     await copyText(file.url);
     showToast("链接已复制");
+    return;
+  }
+
+  if (action.dataset.action === "copy-markdown") {
+    await copyText(markdownForFile(file));
+    showToast("Markdown 已复制");
+    return;
   }
 
   if (action.dataset.action === "rename") {
     state.pendingRename = file;
+    setRenameError();
+    setRenameBusy(false);
     elements.renameInput.value = file.originalName;
     elements.renameDialog.returnValue = "";
     elements.renameDialog.showModal();
@@ -374,34 +482,60 @@ elements.resourceList.addEventListener("click", async (event) => {
   }
 });
 
-elements.renameDialog.addEventListener("close", async () => {
-  if (elements.renameDialog.returnValue !== "confirm" || !state.pendingRename) {
-    state.pendingRename = null;
+elements.renameForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (state.renaming || !state.pendingRename) return;
+
+  const originalName = elements.renameInput.value.trim();
+  if (!originalName) {
+    setRenameError("文件名不能为空");
+    elements.renameInput.focus();
     return;
   }
 
   const file = state.pendingRename;
-  const originalName = elements.renameInput.value.trim();
+  setRenameError();
+  setRenameBusy(true);
+
+  try {
+    const response = await api(`/api/files/${file.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ originalName }),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      setRenameError(payload?.error?.message || "重命名失败，请稍后重试");
+      return;
+    }
+
+    const updated = (await response.json()).file;
+    state.files = state.files.map((item) => (item.id === updated.id ? updated : item));
+    renderFiles();
+    elements.renameDialog.close("confirm");
+    showToast("资源名称和链接已更新");
+  } catch (error) {
+    console.error(error);
+    setRenameError("无法连接服务器，请稍后重试");
+  } finally {
+    if (elements.renameDialog.open) setRenameBusy(false);
+  }
+});
+
+elements.renameInput.addEventListener("input", () => setRenameError());
+
+elements.renameCancel.addEventListener("click", () => {
+  if (!state.renaming) elements.renameDialog.close("cancel");
+});
+
+elements.renameDialog.addEventListener("cancel", (event) => {
+  if (state.renaming) event.preventDefault();
+});
+
+elements.renameDialog.addEventListener("close", () => {
   state.pendingRename = null;
-  if (!originalName) {
-    showToast("文件名不能为空", "error");
-    return;
-  }
-
-  const response = await api(`/api/files/${file.id}`, {
-    method: "PATCH",
-    body: JSON.stringify({ originalName }),
-  });
-  if (!response.ok) {
-    const payload = await response.json().catch(() => null);
-    showToast(payload?.error?.message || "重命名失败", "error");
-    return;
-  }
-
-  const updated = (await response.json()).file;
-  state.files = state.files.map((item) => (item.id === updated.id ? updated : item));
-  renderFiles();
-  showToast("资源名称和链接已更新");
+  setRenameBusy(false);
+  setRenameError();
+  elements.renameForm.reset();
 });
 
 elements.deleteDialog.addEventListener("close", async () => {
@@ -428,8 +562,22 @@ async function initialize() {
   refreshIcons();
   try {
     await loadFiles();
-  } catch {
+  } catch (error) {
+    console.error(error);
     showToast("无法连接服务器", "error");
+  }
+  try {
+    await loadPreview();
+    connectPreview();
+  } catch (error) {
+    console.error(error);
+    setPreviewStatus("无法连接", "error");
+  }
+  try {
+    initializeUploader();
+  } catch (error) {
+    console.error(error);
+    showToast("上传组件加载失败", "error");
   }
 }
 

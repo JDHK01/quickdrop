@@ -22,8 +22,8 @@ fi
 umask 077
 {
   printf 'PUBLIC_BASE_URL=%s\n' "$1"
-  printf 'MAX_FILE_SIZE_MB=256\n'
   printf 'MAX_FILES_PER_UPLOAD=10\n'
+  printf 'MAX_PREVIEW_CHARS=65536\n'
 } > .env
 
 mkdir -p data/files data/meta
