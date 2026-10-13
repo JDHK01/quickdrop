@@ -15,7 +15,7 @@ QuickDrop 是一个轻量公开文件托管与 URL 管理服务。页面无需�
 
 ## 使用说明
 
-访问 部署者提供的访问地址 即可使用，无需登录。
+使用部署者提供的访问地址，无需登录。公开仓库不包含实际服务器地址。
 
 1. 在“实时预览”框输入需要在相邻主机之间传递的文本；打开同一页面的其他主机会通过实时连接自动看到更新。
 2. 将文件拖入上传区域，或点击“选择文件”；也可以直接粘贴剪贴板中的图片或文件。
@@ -33,10 +33,11 @@ QuickDrop 是一个轻量公开文件托管与 URL 管理服务。页面无需�
 
 ## 部署
 
-要求 Docker Engine 与 Docker Compose。首次部署：
+要求 Docker Engine 与 Docker Compose。首次部署时，在自己的维护环境中设置 `PUBLIC_BASE_URL` 为实际访问地址；不要把该地址提交到公开仓库：
 
 ```sh
-./scripts/init-env.sh ${PUBLIC_BASE_URL}
+export PUBLIC_BASE_URL='<填写你的服务访问地址>'
+./scripts/init-env.sh "$PUBLIC_BASE_URL"
 docker compose up -d --build
 docker compose ps
 ```
@@ -80,24 +81,24 @@ docker compose down
 | 更新实时预览 | `PUT /api/preview`，JSON 字段为 `text` |
 | 访问文件内容 | `GET /f/:id/:filename` |
 
-示例：
+示例（`PUBLIC_BASE_URL` 由部署者在本地环境中设置）：
 
 ```sh
-curl ${PUBLIC_BASE_URL}/api/files
+curl "${PUBLIC_BASE_URL}/api/files"
 
 curl -H 'X-QuickDrop-Request: 1' \
   -F 'files=@./photo.jpg' \
-  ${PUBLIC_BASE_URL}/api/files
+  "${PUBLIC_BASE_URL}/api/files"
 
 curl -X PATCH \
   -H 'Content-Type: application/json' \
   -H 'X-QuickDrop-Request: 1' \
   -d '{"originalName":"new-name.jpg"}' \
-  ${PUBLIC_BASE_URL}/api/files/RESOURCE_ID
+  "${PUBLIC_BASE_URL}/api/files/RESOURCE_ID"
 
 curl -X DELETE \
   -H 'X-QuickDrop-Request: 1' \
-  ${PUBLIC_BASE_URL}/api/files/RESOURCE_ID
+  "${PUBLIC_BASE_URL}/api/files/RESOURCE_ID"
 ```
 
 列表、单项和写操作返回的资源对象均包含 `id`、`originalName`、`size`、`contentType`、`uploadedAt` 和 `url`，可直接建立 URL 与文件资源的映射。
@@ -115,7 +116,7 @@ git push origin main
 git ls-remote origin refs/heads/main
 ```
 
-推送需要 GitHub 写入权限；部署服务器不保存个人 GitHub 私钥或访问令牌。若服务器没有推送权限，可在已有 GitHub 授权的维护机器临时建立服务器仓库的 bare 镜像，再将 `main` 推送到 GitHub；推送后删除临时镜像。不要将 `.env`、`data/`、备份归档或用户上传文件加入 Git。
+推送需要 GitHub 写入权限；部署服务器不保存个人 GitHub 私钥或访问令牌。若服务器没有推送权限，可在已有 GitHub 授权的维护机器临时建立服务器仓库的 bare 镜像，再将 `main` 推送到 GitHub；推送后删除临时镜像。不要将实际服务器地址、`.env`、`data/`、备份归档或用户上传文件加入 Git。
 
 文件内容位于 `data/files/`，对应元数据位于 `data/meta/`，实时预览位于 `data/preview.json`。资源数据需要单独备份，一致性备份可按以下方式执行：
 
